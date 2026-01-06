@@ -344,7 +344,7 @@ async function scrapeAtCoderProblems() {
     const browser = await puppeteer.launch({
         headless: false,
         defaultViewport: null,
-        protocolTimeout: 0, // No timeout for large scraping jobs
+        protocolTimeout: 0,
         args: ["--disable-blink-features=AutomationControlled"],
     });
 
@@ -358,138 +358,91 @@ async function scrapeAtCoderProblems() {
 
     const problems = [];
     const START_CONTEST = 100;
-    const END_CONTEST = 439;
-
-    console.log(`Scraping AtCoder contests abc${START_CONTEST} to abc${END_CONTEST}`);
-    console.log(`Total contests to scrape: ${END_CONTEST - START_CONTEST + 1}`);
+    const END_CONTEST = 439; // Final range for all ABC contests
 
     for (let contestNum = START_CONTEST; contestNum <= END_CONTEST; contestNum++) {
         const contestId = `abc${contestNum.toString().padStart(3, '0')}`;
         const tasksUrl = `https://atcoder.jp/contests/${contestId}/tasks`;
-        
-        console.log(`\nProcessing contest: ${contestId}`);
-
         try {
-            await page.goto(tasksUrl, {
-                waitUntil: "domcontentloaded",
-                timeout: 0,
-            });
-
-            await new Promise(resolve => setTimeout(resolve, 1500));
-
-            // Extract problem links and titles from the task list
-            const contestProblems = await page.evaluate(() => {
-                const problems = [];
-                const table = document.querySelector(".table-responsive");
-                
-                if (table) {
-                    const rows = table.querySelectorAll("tbody tr");
-                    rows.forEach((row) => {
-                        const cells = row.querySelectorAll("td");
-                        if (cells.length > 0) {
-                            const link = cells[0].querySelector("a");
-                            if (link) {
-                                problems.push({
-                                    title: link.textContent.trim(),
-                                    url: link.href
-                                });
-                            }
-                        }
-                    });
-                }
-                
-                return problems;
-            });
-
-            console.log(`Found ${contestProblems.length} problems in ${contestId}`);
-
-            // Scrape description for each problem
-            for (const { title, url: problemUrl } of contestProblems) {
-                try {
-                    await page.goto(problemUrl, {
-                        waitUntil: "domcontentloaded",
-                        timeout: 0,
-                    });
-
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-
-                    const description = await page.evaluate(() => {
-                        // Get description from div.part
-                        const parts = document.querySelectorAll("div.part");
-                        let description = "";
-                        
-                        parts.forEach((part) => {
-                            const clone = part.cloneNode(true);
-                            const unwanted = clone.querySelectorAll("script, style");
-                            unwanted.forEach(el => el.remove());
-                            description += clone.textContent.trim() + " ";
-                        });
-                        
-                        return description.trim();
-                    });
-
-                    if (title && description) {
-                        problems.push({
-                            title: title,
-                            url: problemUrl,
-                            description: description.substring(0, 1000),
-                        });
-                        console.log(`✅ Scraped: ${title}`);
-                    } else {
-                        console.warn(`⚠️ Incomplete data for ${problemUrl}`);
-                    }
-
-                    await new Promise(resolve => setTimeout(resolve, 800));
-
-                } catch (err) {
-                    console.warn(`❌ Failed to scrape ${problemUrl}: ${err.message}`);
-                }
-            }
-
+            await page.goto(tasksUrl, { waitUntil: "domcontentloaded", timeout: 0 });
+            await page.waitForSelector(".table-responsive");
         } catch (err) {
-            console.warn(`❌ Failed to access contest ${contestId}: ${err.message}`);
+            console.warn(`❌ Contest page not found for ${contestId}, skipping...`);
+            continue;
+        }
+
+        const contestProblems = await page.evaluate(() => {
+            const problems = [];
+            document.querySelectorAll(".table-responsive tbody tr").forEach(row => {
+                const link = row.querySelector("td a");
+                if (link) {
+                    problems.push({
+                        title: link.textContent.trim(),
+                        url: link.href
+                    });
+                }
+            });
+            return problems;
+        });
+
+        for (const { title, url } of contestProblems) {
+
+            await page.goto(url, { waitUntil: "domcontentloaded", timeout: 0 });
+
+            await page.waitForSelector('#task-statement span.lang-en', { timeout: 0 });
+
+            const description = await page.evaluate(() => {
+                const en = document.querySelector('#task-statement span.lang-en');
+                return en ? en.textContent.trim() : '[No description]';
+            });
+
+            problems.push({
+                title,
+                url,
+                description: description.substring(0, 1000),
+            });
+
+            console.log(`✅ Scraped: ${title}`);
         }
     }
 
     await fsPromises.mkdir("./problems", { recursive: true });
-
     await fsPromises.writeFile(
         "./problems/atcoder_problems.json",
         JSON.stringify(problems, null, 2)
     );
 
-    console.log(`\n✅ Saved ${problems.length} AtCoder problems`);
-
     await browser.close();
 }
+
 
 // Run all scrapers with error handling
 async function runAllScrapers() {
     // console.log("Starting scraping process...\n");
 
     // // LeetCode
-    try {
-        console.log("=== Starting LeetCode Scraper ===");
-        await scrapeLeetcodeProblems();
-    } catch (err) {
-        console.error(`\n❌ LeetCode scraper failed: ${err.message}\n`);
-    }
+    // try {
+    //     console.log("=== Starting LeetCode Scraper ===");
+    //     await scrapeLeetcodeProblems();
+    // } catch (err) {
+    //     console.error(`\n❌ LeetCode scraper failed: ${err.message}\n`);
+    // }
 
     // Codeforces
-    try {
-        console.log("\n=== Starting Codeforces Scraper ===");
-        await scrapeCodeforcesProblems();
-    } catch (err) {
-        console.error(`\n❌ Codeforces scraper failed: ${err.message}\n`);
-    }
+    // try {
+    //     console.log("\n=== Starting Codeforces Scraper ===");
+    //     await scrapeCodeforcesProblems();
+    // } catch (err) {
+    //     console.error(`\n❌ Codeforces scraper failed: ${err.message}\n`);
+    // }
 
     // // CodeChef
-    try {
-        console.log("\n=== Starting CodeChef Scraper ===");
-        await scrapeCodeChefProblems();
-    } catch (err) {
-        console.error(`\n❌ CodeChef scraper failed: ${err.message}\n`);
-    }
+    // try {
+    //     console.log("\n=== Starting CodeChef Scraper ===");
+    //     await scrapeCodeChefProblems();
+    // } catch (err) {
+    //     console.error(`\n❌ CodeChef scraper failed: ${err.message}\n`);
+    // }
 
     // AtCoder
     try {
